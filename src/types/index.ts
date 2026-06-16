@@ -5,3 +5,23 @@ export interface HeadingItem {
 }
 
 export type Theme = 'light' | 'dark';
+
+export interface Document {
+  id: string;
+  name: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PdfExportOptions {
+  filename: string;
+  includeOutline: boolean;
+  orientation: 'portrait' | 'landscape';
+}
+
+export interface SearchMatch {
+  index: number;
+  element: HTMLElement;
+  text: string;
+}
