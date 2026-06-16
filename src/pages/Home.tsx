@@ -4,15 +4,28 @@ import Outline from '@/components/Outline';
 import Editor from '@/components/Editor';
 import Preview from '@/components/Preview';
 import SearchPanel from '@/components/SearchPanel';
+import VersionPanel from '@/components/VersionPanel';
 import { useAppStore } from '@/store';
 
 export default function Home() {
-  const { theme, setTheme, outline, searchQuery, clearSearchHighlightsInDom } = useAppStore();
+  const {
+    theme,
+    setTheme,
+    outline,
+    searchQuery,
+    clearSearchHighlightsInDom,
+    currentDocId,
+    documents,
+  } = useAppStore();
+
   const previewRef = useRef<HTMLDivElement>(null);
   const editorScrollRef = useRef<HTMLTextAreaElement>(null);
+
   const [scrollRatio, setScrollRatio] = useState(0);
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
-  const [searchPanelOpen, setSearchPanelOpen] = useState(!!searchQuery);
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false);
+  const [versionPanelOpen, setVersionPanelOpen] = useState(false);
+
   const isProgrammaticScroll = useRef(false);
   const scrollTimeout = useRef<number | null>(null);
 
@@ -23,10 +36,30 @@ export default function Home() {
   }, [theme]);
 
   useEffect(() => {
-    if (searchQuery) {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        if (searchPanelOpen) {
+          const searchInput = document.querySelector('.search-panel-input') as HTMLInputElement | null;
+          if (searchInput) {
+            searchInput.focus();
+            searchInput.select();
+          }
+        } else {
+          setSearchPanelOpen(true);
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [searchPanelOpen]);
+
+  useEffect(() => {
+    if (searchQuery && !searchPanelOpen) {
       setSearchPanelOpen(true);
     }
-  }, [searchQuery]);
+  }, [searchQuery, searchPanelOpen]);
 
   useEffect(() => {
     return () => {
@@ -38,26 +71,30 @@ export default function Home() {
   }, [clearSearchHighlightsInDom]);
 
   const handleToggleSearchPanel = useCallback(() => {
-    setSearchPanelOpen((prev) => {
-      if (prev) {
-        const previewEl = document.querySelector('.markdown-body') as HTMLElement | null;
-        if (previewEl) {
-          clearSearchHighlightsInDom(previewEl);
-        }
-      }
-      return !prev;
-    });
-  }, [clearSearchHighlightsInDom]);
+    setSearchPanelOpen((prev) => !prev);
+  }, []);
+
+  const handleCloseSearchPanel = useCallback(() => {
+    setSearchPanelOpen(false);
+  }, []);
+
+  const handleToggleVersionPanel = useCallback(() => {
+    setVersionPanelOpen((prev) => !prev);
+  }, []);
+
+  const handleCloseVersionPanel = useCallback(() => {
+    setVersionPanelOpen(false);
+  }, []);
 
   const handleEditorScroll = useCallback((ratio: number) => {
     if (isProgrammaticScroll.current) return;
     setScrollRatio(ratio);
-    
+
     const previewContainer = previewRef.current;
     if (previewContainer) {
       isProgrammaticScroll.current = true;
       previewContainer.scrollTop = ratio * (previewContainer.scrollHeight - previewContainer.clientHeight);
-      
+
       if (scrollTimeout.current) {
         window.clearTimeout(scrollTimeout.current);
       }
@@ -78,7 +115,7 @@ export default function Home() {
     if (editor) {
       isProgrammaticScroll.current = true;
       editor.scrollTop = ratio * (editor.scrollHeight - editor.clientHeight);
-      
+
       if (scrollTimeout.current) {
         window.clearTimeout(scrollTimeout.current);
       }
@@ -122,7 +159,7 @@ export default function Home() {
       const scrollTop = previewContainer.scrollTop + (rect.top - containerRect.top) - 20;
       previewContainer.scrollTo({ top: scrollTop, behavior: 'smooth' });
       setActiveHeadingId(id);
-      
+
       if (scrollTimeout.current) {
         window.clearTimeout(scrollTimeout.current);
       }
@@ -134,18 +171,24 @@ export default function Home() {
 
   return (
     <div
-      className="h-screen flex flex-col"
+      className="h-screen flex flex-col overflow-hidden"
       style={{ backgroundColor: 'var(--color-bg-primary)' }}
     >
       <Toolbar
         previewRef={previewRef}
         onToggleSearchPanel={handleToggleSearchPanel}
         searchPanelOpen={searchPanelOpen}
+        onToggleVersionPanel={handleToggleVersionPanel}
+        versionPanelOpen={versionPanelOpen}
       />
 
       <div className="flex-1 flex overflow-hidden">
         {searchPanelOpen && (
-          <SearchPanel previewRef={previewRef} />
+          <SearchPanel
+            isOpen={searchPanelOpen}
+            onClose={handleCloseSearchPanel}
+            previewRef={previewRef}
+          />
         )}
 
         <Outline onNavigate={handleNavigate} activeHeadingId={activeHeadingId} />
@@ -155,10 +198,21 @@ export default function Home() {
             <Editor onScroll={handleEditorScroll} scrollRef={editorScrollRef} />
           </div>
 
-          <div className="flex-1 min-w-0 border-l" style={{ borderColor: 'var(--color-border)' }}>
+          <div
+            className="flex-1 min-w-0 border-l"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
             <Preview ref={previewRef} scrollRatio={scrollRatio} />
           </div>
         </div>
+
+        {versionPanelOpen && (
+          <VersionPanel
+            isOpen={versionPanelOpen}
+            onClose={handleCloseVersionPanel}
+            previewRef={previewRef}
+          />
+        )}
       </div>
     </div>
   );

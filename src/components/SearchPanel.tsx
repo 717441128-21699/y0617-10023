@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   Search, ChevronUp, ChevronDown, X, List, FileText, Hash
 } from 'lucide-react';
@@ -6,6 +6,9 @@ import { useAppStore } from '@/store';
 import type { SearchMatchItem } from '@/types';
 
 interface SearchPanelProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onOpen?: () => void;
   previewRef: React.RefObject<HTMLDivElement | null>;
 }
 
@@ -14,7 +17,7 @@ interface SearchGroup {
   matches: SearchMatchItem[];
 }
 
-export default function SearchPanel({ previewRef }: SearchPanelProps) {
+export default function SearchPanel({ isOpen, onClose, onOpen, previewRef }: SearchPanelProps) {
   const {
     searchQuery,
     searchMatches,
@@ -24,8 +27,8 @@ export default function SearchPanel({ previewRef }: SearchPanelProps) {
     clearSearch,
   } = useAppStore();
 
+  const inputRef = useRef<HTMLInputElement>(null);
   const [inputValue, setInputValue] = useState(searchQuery);
-  const [isOpen, setIsOpen] = useState(!!searchQuery);
 
   const groupedMatches = useMemo(() => {
     const groups = new Map<string, SearchMatchItem[]>();
@@ -67,11 +70,15 @@ export default function SearchPanel({ previewRef }: SearchPanelProps) {
     }
   };
 
-  const handleClear = () => {
+  const handleClear = useCallback(() => {
     setInputValue('');
     clearSearch();
-    setIsOpen(false);
-  };
+    onClose();
+  }, [clearSearch, onClose]);
+
+  const handleClose = useCallback(() => {
+    onClose();
+  }, [onClose]);
 
   const handleMatchClick = (index: number) => {
     setCurrentSearchIndex(index);
@@ -94,20 +101,33 @@ export default function SearchPanel({ previewRef }: SearchPanelProps) {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
         e.preventDefault();
-        setIsOpen(true);
+        if (isOpen) {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        } else {
+          onOpen?.();
+        }
       }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, []);
+  }, [isOpen, onOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => {
+        inputRef.current?.focus();
+        if (inputValue) {
+          inputRef.current?.select();
+        }
+      }, 0);
+    }
+  }, [isOpen, inputValue]);
 
   useEffect(() => {
     setInputValue(searchQuery);
-    if (searchQuery && !isOpen) {
-      setIsOpen(true);
-    }
-  }, [searchQuery, isOpen]);
+  }, [searchQuery]);
 
   const highlightContext = (context: string, query: string) => {
     if (!query.trim()) return context;
@@ -133,37 +153,7 @@ export default function SearchPanel({ previewRef }: SearchPanelProps) {
   };
 
   if (!isOpen) {
-    return (
-      <button
-        onClick={() => setIsOpen(true)}
-        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-        style={{
-          backgroundColor: 'var(--color-bg-tertiary)',
-          color: 'var(--color-text-muted)',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
-          e.currentTarget.style.color = 'var(--color-text-primary)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
-          e.currentTarget.style.color = 'var(--color-text-muted)';
-        }}
-        title="搜索 (Ctrl+F)"
-      >
-        <Search size={16} />
-        <span className="hidden sm:inline">搜索</span>
-        <span
-          className="hidden md:inline text-xs px-1.5 py-0.5 rounded"
-          style={{
-            backgroundColor: 'var(--color-bg-hover)',
-            color: 'var(--color-text-muted)',
-          }}
-        >
-          Ctrl+F
-        </span>
-      </button>
-    );
+    return null;
   }
 
   return (
@@ -172,8 +162,8 @@ export default function SearchPanel({ previewRef }: SearchPanelProps) {
       style={{
         backgroundColor: 'var(--color-bg-secondary)',
         borderColor: 'var(--color-border)',
-        width: '300px',
-        minWidth: '300px',
+        width: '320px',
+        minWidth: '320px',
       }}
     >
       <div
@@ -190,13 +180,13 @@ export default function SearchPanel({ previewRef }: SearchPanelProps) {
           >
             <Search size={14} style={{ color: 'var(--color-text-muted)' }} />
             <input
-              autoFocus
+              ref={inputRef}
               type="text"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="搜索关键词..."
-              className="flex-1 bg-transparent outline-none text-sm"
+              className="search-panel-input flex-1 bg-transparent outline-none text-sm"
               style={{ color: 'var(--color-text-primary)' }}
             />
             {searchMatches.length > 0 && (
@@ -222,6 +212,7 @@ export default function SearchPanel({ previewRef }: SearchPanelProps) {
                 onMouseLeave={(e) => {
                   e.currentTarget.style.color = 'var(--color-text-muted)';
                 }}
+                title="清空搜索"
               >
                 <X size={14} />
               </button>
@@ -381,7 +372,7 @@ export default function SearchPanel({ previewRef }: SearchPanelProps) {
           </span>
         </div>
         <button
-          onClick={() => setIsOpen(false)}
+          onClick={handleClose}
           className="text-xs px-2 py-1 rounded transition-colors"
           style={{ color: 'var(--color-text-muted)' }}
           onMouseEnter={(e) => {

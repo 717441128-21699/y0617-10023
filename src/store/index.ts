@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import hljs from 'highlight.js';
-import type { HeadingItem, Theme, Document, SearchMatchItem, SortType } from '@/types';
+import type { HeadingItem, Theme, Document, DocumentVersion, Folder, SearchMatchItem, SortType, DocumentFilter } from '@/types';
 import { defaultMarkdown } from '@/utils/defaultContent';
 
 marked.use(
@@ -26,13 +26,14 @@ interface AppState {
   outline: HeadingItem[];
   theme: Theme;
   documents: Document[];
+  folders: Folder[];
   currentDocId: string;
   searchQuery: string;
   searchMatches: SearchMatchItem[];
   currentSearchIndex: number;
-  sortType: SortType;
-  filterTag: string | null;
+  filter: DocumentFilter;
   availableTags: string[];
+  currentVersionId: string | null;
   setMarkdown: (markdown: string) => void;
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
@@ -42,21 +43,35 @@ interface AppState {
   setCurrentSearchIndex: (index: number) => void;
   clearSearch: () => void;
   clearSearchHighlightsInDom: (previewElement: HTMLElement | null) => void;
-  createDocument: () => void;
+  createDocument: (folderId?: string | null) => void;
   renameDocument: (id: string, name: string) => void;
   deleteDocument: (id: string) => void;
   switchDocument: (id: string) => void;
   addDocumentTag: (id: string, tag: string) => void;
   removeDocumentTag: (id: string, tag: string) => void;
-  setSortType: (type: SortType) => void;
+  moveDocument: (docId: string, folderId: string | null) => void;
+  createFolder: (name: string) => void;
+  renameFolder: (id: string, name: string) => void;
+  deleteFolder: (id: string) => void;
+  setFilterKeyword: (keyword: string) => void;
   setFilterTag: (tag: string | null) => void;
+  setFilterFolder: (folderId: string | null) => void;
+  setFilterDateRange: (dateFrom: number | null, dateTo: number | null) => void;
+  setFilterSortType: (type: SortType) => void;
+  resetFilter: () => void;
   refreshAvailableTags: () => void;
   getFilteredDocuments: () => Document[];
+  saveVersion: (description?: string) => void;
+  restoreVersion: (versionId: string) => void;
+  deleteVersion: (versionId: string) => void;
+  getCurrentVersions: () => DocumentVersion[];
 }
 
 const STORAGE_KEY_DOCS = 'md-editor-documents';
+const STORAGE_KEY_FOLDERS = 'md-editor-folders';
 const STORAGE_KEY_CURRENT_DOC = 'md-editor-current-doc';
 const STORAGE_KEY_THEME = 'md-editor-theme';
+const STORAGE_KEY_FILTER = 'md-editor-filter';
 
 const slugify = (text: string): string => {
   return text
@@ -145,6 +160,28 @@ const extractOutlineFromMarkdown = (markdown: string): HeadingItem[] => {
   return headings;
 };
 
+const loadFoldersFromStorage = (): Folder[] => {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_FOLDERS);
+    if (saved) {
+      return JSON.parse(saved) as Folder[];
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+};
+
+const saveFoldersToStorage = (folders: Folder[]): void => {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(folders));
+  } catch {
+    // ignore
+  }
+};
+
 const loadDocumentsFromStorage = (): { docs: Document[]; currentId: string } => {
   if (typeof localStorage === 'undefined') {
     return {
@@ -154,6 +191,8 @@ const loadDocumentsFromStorage = (): { docs: Document[]; currentId: string } => 
           name: '未命名文档',
           content: defaultMarkdown,
           tags: ['示例'],
+          folderId: null,
+          versions: [],
           createdAt: Date.now(),
           updatedAt: Date.now(),
         },
@@ -167,10 +206,12 @@ const loadDocumentsFromStorage = (): { docs: Document[]; currentId: string } => 
     const currentId = localStorage.getItem(STORAGE_KEY_CURRENT_DOC);
     
     if (saved) {
-      const rawDocs = JSON.parse(saved) as (Document & { tags?: string[] })[];
+      const rawDocs = JSON.parse(saved) as (Document & { tags?: string[]; folderId?: string | null; versions?: DocumentVersion[] })[];
       const docs = rawDocs.map((d) => ({
         ...d,
         tags: d.tags || [],
+        folderId: d.folderId || null,
+        versions: d.versions || [],
       }));
       if (docs.length > 0) {
         return {
@@ -188,6 +229,8 @@ const loadDocumentsFromStorage = (): { docs: Document[]; currentId: string } => 
     name: '未命名文档',
     content: defaultMarkdown,
     tags: ['示例'],
+    folderId: null,
+    versions: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -200,6 +243,44 @@ const saveDocumentsToStorage = (docs: Document[], currentId: string): void => {
   try {
     localStorage.setItem(STORAGE_KEY_DOCS, JSON.stringify(docs));
     localStorage.setItem(STORAGE_KEY_CURRENT_DOC, currentId);
+  } catch {
+    // ignore
+  }
+};
+
+const loadFilterFromStorage = (): DocumentFilter => {
+  if (typeof localStorage === 'undefined') {
+    return {
+      keyword: '',
+      tag: null,
+      folderId: null,
+      dateFrom: null,
+      dateTo: null,
+      sortType: 'updatedAt',
+    };
+  }
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_FILTER);
+    if (saved) {
+      return JSON.parse(saved) as DocumentFilter;
+    }
+  } catch {
+    // ignore
+  }
+  return {
+    keyword: '',
+    tag: null,
+    folderId: null,
+    dateFrom: null,
+    dateTo: null,
+    sortType: 'updatedAt',
+  };
+};
+
+const saveFilterToStorage = (filter: DocumentFilter): void => {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_KEY_FILTER, JSON.stringify(filter));
   } catch {
     // ignore
   }
@@ -340,6 +421,7 @@ export const useAppStore = create<AppState>((set, get) => {
     ? localStorage.getItem(STORAGE_KEY_THEME) as Theme | null 
     : null) || 'light';
   
+  const folders = loadFoldersFromStorage();
   const { docs, currentId } = loadDocumentsFromStorage();
   const currentDoc = docs.find((d) => d.id === currentId) || docs[0];
   
@@ -347,6 +429,7 @@ export const useAppStore = create<AppState>((set, get) => {
   const initialOutline = extractOutlineFromMarkdown(currentDoc.content);
   
   const allTags = Array.from(new Set(docs.flatMap((d) => d.tags)));
+  const savedFilter = loadFilterFromStorage();
 
   return {
     markdown: currentDoc.content,
@@ -354,13 +437,14 @@ export const useAppStore = create<AppState>((set, get) => {
     outline: initialOutline,
     theme: savedTheme,
     documents: docs,
+    folders,
     currentDocId: currentDoc.id,
     searchQuery: '',
     searchMatches: [],
     currentSearchIndex: -1,
-    sortType: 'updatedAt',
-    filterTag: null,
+    filter: savedFilter,
     availableTags: allTags,
+    currentVersionId: null,
 
     setMarkdown: (markdown: string) => {
       const { currentDocId, documents, searchQuery, clearSearchHighlightsInDom } = get();
@@ -374,7 +458,7 @@ export const useAppStore = create<AppState>((set, get) => {
       );
       
       saveDocumentsToStorage(updatedDocs, currentDocId);
-      set({ markdown, html, outline, documents: updatedDocs });
+      set({ markdown, html, outline, documents: updatedDocs, currentVersionId: null });
       
       if (searchQuery && typeof setTimeout) {
         setTimeout(() => {
@@ -441,6 +525,11 @@ export const useAppStore = create<AppState>((set, get) => {
         searchMatches: matches,
         currentSearchIndex: matches.length > 0 ? 0 : -1,
       });
+
+      if (matches.length > 0 && matches[0].element) {
+        matches[0].element.classList.remove('search-highlight');
+        matches[0].element.classList.add('search-highlight-active');
+      }
     },
 
     setCurrentSearchIndex: (index: number) => {
@@ -478,13 +567,15 @@ export const useAppStore = create<AppState>((set, get) => {
       set({ searchQuery: '', searchMatches: [], currentSearchIndex: -1 });
     },
 
-    createDocument: () => {
+    createDocument: (folderId: string | null = null) => {
       const { documents, currentDocId } = get();
       const newDoc: Document = {
         id: generateId(),
         name: `未命名文档 ${documents.length + 1}`,
         content: '# 新文档\n\n开始编写你的内容...',
         tags: [],
+        folderId,
+        versions: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -506,6 +597,7 @@ export const useAppStore = create<AppState>((set, get) => {
         searchMatches: [],
         currentSearchIndex: -1,
         availableTags: allTags,
+        currentVersionId: null,
       });
     },
 
@@ -519,7 +611,7 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     deleteDocument: (id: string) => {
-      const { documents, currentDocId } = get();
+      const { documents, currentDocId, folders } = get();
       if (documents.length <= 1) return;
 
       const updatedDocs = documents.filter((doc) => doc.id !== id);
@@ -546,14 +638,18 @@ export const useAppStore = create<AppState>((set, get) => {
           searchMatches: [],
           currentSearchIndex: -1,
           availableTags: allTags,
-          filterTag: allTags.includes(get().filterTag || '') ? get().filterTag : null,
+          currentVersionId: null,
         });
       } else {
         set({ 
           documents: updatedDocs, 
           availableTags: allTags,
-          filterTag: allTags.includes(get().filterTag || '') ? get().filterTag : null,
         });
+      }
+
+      const { filter } = get();
+      if (filter.tag && !allTags.includes(filter.tag)) {
+        get().setFilterTag(null);
       }
     },
 
@@ -575,6 +671,7 @@ export const useAppStore = create<AppState>((set, get) => {
         searchQuery: '',
         searchMatches: [],
         currentSearchIndex: -1,
+        currentVersionId: null,
       });
     },
 
@@ -594,7 +691,7 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     removeDocumentTag: (id: string, tag: string) => {
-      const { documents, currentDocId } = get();
+      const { documents, currentDocId, filter } = get();
       const updatedDocs = documents.map((doc) =>
         doc.id === id
           ? { ...doc, tags: doc.tags.filter((t) => t !== tag), updatedAt: Date.now() }
@@ -602,20 +699,108 @@ export const useAppStore = create<AppState>((set, get) => {
       );
       saveDocumentsToStorage(updatedDocs, currentDocId);
       const allTags = Array.from(new Set(updatedDocs.flatMap((d) => d.tags)));
-      const currentFilter = get().filterTag;
+      
       set({
         documents: updatedDocs,
         availableTags: allTags,
-        filterTag: currentFilter === tag ? null : currentFilter,
       });
+
+      if (filter.tag === tag && !allTags.includes(tag)) {
+        get().setFilterTag(null);
+      }
     },
 
-    setSortType: (type: SortType) => {
-      set({ sortType: type });
+    moveDocument: (docId: string, folderId: string | null) => {
+      const { documents, currentDocId } = get();
+      const updatedDocs = documents.map((doc) =>
+        doc.id === docId
+          ? { ...doc, folderId, updatedAt: Date.now() }
+          : doc
+      );
+      saveDocumentsToStorage(updatedDocs, currentDocId);
+      set({ documents: updatedDocs });
+    },
+
+    createFolder: (name: string) => {
+      const { folders } = get();
+      const newFolder: Folder = {
+        id: generateId(),
+        name: name.trim() || '未命名分组',
+        createdAt: Date.now(),
+      };
+      const updatedFolders = [...folders, newFolder];
+      saveFoldersToStorage(updatedFolders);
+      set({ folders: updatedFolders });
+    },
+
+    renameFolder: (id: string, name: string) => {
+      const { folders } = get();
+      const updatedFolders = folders.map((f) =>
+        f.id === id ? { ...f, name: name.trim() || '未命名分组' } : f
+      );
+      saveFoldersToStorage(updatedFolders);
+      set({ folders: updatedFolders });
+    },
+
+    deleteFolder: (id: string) => {
+      const { folders, documents, currentDocId } = get();
+      const updatedFolders = folders.filter((f) => f.id !== id);
+      saveFoldersToStorage(updatedFolders);
+      
+      const updatedDocs = documents.map((doc) =>
+        doc.folderId === id ? { ...doc, folderId: null } : doc
+      );
+      saveDocumentsToStorage(updatedDocs, currentDocId);
+      
+      set({ folders: updatedFolders, documents: updatedDocs });
+      
+      const { filter } = get();
+      if (filter.folderId === id) {
+        get().setFilterFolder(null);
+      }
+    },
+
+    setFilterKeyword: (keyword: string) => {
+      const filter = { ...get().filter, keyword };
+      saveFilterToStorage(filter);
+      set({ filter });
     },
 
     setFilterTag: (tag: string | null) => {
-      set({ filterTag: tag });
+      const filter = { ...get().filter, tag };
+      saveFilterToStorage(filter);
+      set({ filter });
+    },
+
+    setFilterFolder: (folderId: string | null) => {
+      const filter = { ...get().filter, folderId };
+      saveFilterToStorage(filter);
+      set({ filter });
+    },
+
+    setFilterDateRange: (dateFrom: number | null, dateTo: number | null) => {
+      const filter = { ...get().filter, dateFrom, dateTo };
+      saveFilterToStorage(filter);
+      set({ filter });
+    },
+
+    setFilterSortType: (type: SortType) => {
+      const filter = { ...get().filter, sortType: type };
+      saveFilterToStorage(filter);
+      set({ filter });
+    },
+
+    resetFilter: () => {
+      const defaultFilter: DocumentFilter = {
+        keyword: '',
+        tag: null,
+        folderId: null,
+        dateFrom: null,
+        dateTo: null,
+        sortType: 'updatedAt',
+      };
+      saveFilterToStorage(defaultFilter);
+      set({ filter: defaultFilter });
     },
 
     refreshAvailableTags: () => {
@@ -625,15 +810,37 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     getFilteredDocuments: () => {
-      const { documents, sortType, filterTag } = get();
-      let filtered = filterTag
-        ? documents.filter((d) => d.tags.includes(filterTag))
-        : [...documents];
+      const { documents, filter } = get();
+      let filtered = [...documents];
+
+      if (filter.keyword) {
+        const keyword = filter.keyword.toLowerCase();
+        filtered = filtered.filter((d) =>
+          d.name.toLowerCase().includes(keyword) ||
+          d.content.toLowerCase().includes(keyword)
+        );
+      }
+
+      if (filter.tag) {
+        filtered = filtered.filter((d) => d.tags.includes(filter.tag!));
+      }
+
+      if (filter.folderId !== null) {
+        filtered = filtered.filter((d) => d.folderId === filter.folderId);
+      }
+
+      if (filter.dateFrom) {
+        filtered = filtered.filter((d) => d.updatedAt >= filter.dateFrom!);
+      }
+      if (filter.dateTo) {
+        const endOfDay = filter.dateTo + 24 * 60 * 60 * 1000 - 1;
+        filtered = filtered.filter((d) => d.updatedAt <= endOfDay);
+      }
       
       filtered.sort((a, b) => {
-        if (sortType === 'name') {
+        if (filter.sortType === 'name') {
           return a.name.localeCompare(b.name, 'zh-CN');
-        } else if (sortType === 'updatedAt') {
+        } else if (filter.sortType === 'updatedAt') {
           return b.updatedAt - a.updatedAt;
         } else {
           return b.createdAt - a.createdAt;
@@ -641,6 +848,83 @@ export const useAppStore = create<AppState>((set, get) => {
       });
       
       return filtered;
+    },
+
+    saveVersion: (description?: string) => {
+      const { currentDocId, documents, markdown } = get();
+      const currentDoc = documents.find((d) => d.id === currentDocId);
+      const newVersion: DocumentVersion = {
+        id: generateId(),
+        content: markdown,
+        name: currentDoc?.name || '未命名',
+        savedAt: Date.now(),
+        description,
+      };
+
+      const updatedDocs = documents.map((doc) => {
+        if (doc.id === currentDocId) {
+          const versions = [...doc.versions.slice(-9)];
+          versions.push(newVersion);
+          return { ...doc, versions, updatedAt: Date.now() };
+        }
+        return doc;
+      });
+
+      saveDocumentsToStorage(updatedDocs, currentDocId);
+      set({ documents: updatedDocs, currentVersionId: newVersion.id });
+    },
+
+    restoreVersion: (versionId: string) => {
+      const { currentDocId, documents } = get();
+      const doc = documents.find((d) => d.id === currentDocId);
+      const version = doc?.versions.find((v) => v.id === versionId);
+      
+      if (!doc || !version) return;
+
+      const html = parseMarkdownToHtml(version.content);
+      const outline = extractOutlineFromMarkdown(version.content);
+
+      const updatedDocs = documents.map((d) =>
+        d.id === currentDocId
+          ? { ...d, content: version.content, name: version.name, updatedAt: Date.now() }
+          : d
+      );
+      saveDocumentsToStorage(updatedDocs, currentDocId);
+
+      set({
+        markdown: version.content,
+        html,
+        outline,
+        documents: updatedDocs,
+        currentVersionId: versionId,
+        searchQuery: '',
+        searchMatches: [],
+        currentSearchIndex: -1,
+      });
+    },
+
+    deleteVersion: (versionId: string) => {
+      const { currentDocId, documents, currentVersionId } = get();
+      const updatedDocs = documents.map((doc) => {
+        if (doc.id === currentDocId) {
+          return {
+            ...doc,
+            versions: doc.versions.filter((v) => v.id !== versionId),
+          };
+        }
+        return doc;
+      });
+      saveDocumentsToStorage(updatedDocs, currentDocId);
+      set({
+        documents: updatedDocs,
+        currentVersionId: currentVersionId === versionId ? null : currentVersionId,
+      });
+    },
+
+    getCurrentVersions: () => {
+      const { currentDocId, documents } = get();
+      const doc = documents.find((d) => d.id === currentDocId);
+      return doc?.versions || [];
     },
   };
 });

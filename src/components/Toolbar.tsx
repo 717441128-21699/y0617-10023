@@ -1,26 +1,33 @@
-import { useState } from 'react';
-import { Sun, Moon, FileDown, Copy, Check, FileText, FolderOpen, ChevronDown, Search } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Sun, Moon, Download, Copy, Check, FileText, FolderOpen, ChevronDown, Search, Clock } from 'lucide-react';
 import { useAppStore } from '@/store';
-import { exportToPdf } from '@/utils/exportPdf';
 import { copyHtmlToClipboard } from '@/utils/copyHtml';
-import type { PdfExportOptions } from '@/types';
 import DocumentManager from './DocumentManager';
 import PdfExportDialog from './PdfExportDialog';
 
 interface ToolbarProps {
-  previewRef: React.RefObject<HTMLDivElement | null>;
+  previewRef: React.RefObject<HTMLDivElement> | null;
   onToggleSearchPanel: () => void;
   searchPanelOpen: boolean;
+  onToggleVersionPanel: () => void;
+  versionPanelOpen: boolean;
 }
 
-export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOpen }: ToolbarProps) {
-  const { theme, toggleTheme, html, documents, currentDocId, outline, clearSearch } = useAppStore();
+export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOpen, onToggleVersionPanel, versionPanelOpen }: ToolbarProps) {
+  const { theme, toggleTheme, html, documents, currentDocId, outline, clearSearch, searchMatches, saveVersion, currentVersionId, getCurrentVersions } = useAppStore();
   const [copied, setCopied] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [showDocManager, setShowDocManager] = useState(false);
-  const [showPdfDialog, setShowPdfDialog] = useState(false);
+  const [docManagerOpen, setDocManagerOpen] = useState(false);
+  const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
 
-  const currentDoc = documents.find((d) => d.id === currentDocId);
+  const currentDoc = useMemo(() => {
+    return documents.find((d) => d.id === currentDocId);
+  }, [documents, currentDocId]);
+
+  const versions = useMemo(() => {
+    return getCurrentVersions();
+  }, [getCurrentVersions]);
+
+  const searchMatchCount = searchMatches.length;
 
   const handleCopyHtml = async () => {
     const success = await copyHtmlToClipboard(html);
@@ -32,28 +39,7 @@ export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOp
 
   const handleOpenPdfDialog = () => {
     clearSearch();
-    setShowPdfDialog(true);
-  };
-
-  const handleExportPdf = async (options: PdfExportOptions) => {
-    if (!previewRef.current) return;
-    setExporting(true);
-    clearSearch();
-    try {
-      await new Promise(resolve => setTimeout(resolve, 50));
-      const contentElement = previewRef.current.querySelector(
-        '.markdown-body'
-      ) as HTMLElement | null;
-      if (contentElement) {
-        await exportToPdf({
-          ...options,
-          contentElement,
-          outline,
-        });
-      }
-    } finally {
-      setExporting(false);
-    }
+    setPdfDialogOpen(true);
   };
 
   return (
@@ -68,7 +54,7 @@ export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOp
         <div className="flex items-center gap-2">
           <FileText size={22} style={{ color: 'var(--color-accent)' }} />
           <button
-            onClick={() => setShowDocManager(true)}
+            onClick={() => setDocManagerOpen(true)}
             className="flex items-center gap-1.5 px-2 py-1 rounded-lg transition-colors"
             onMouseEnter={(e) => {
               e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
@@ -101,37 +87,8 @@ export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOp
 
         <div className="flex items-center gap-2">
           <button
-            onClick={onToggleSearchPanel}
+            onClick={() => setDocManagerOpen(true)}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
-            style={{
-              backgroundColor: searchPanelOpen
-                ? 'var(--color-accent-bg)'
-                : 'var(--color-bg-tertiary)',
-              color: searchPanelOpen
-                ? 'var(--color-accent)'
-                : 'var(--color-text-muted)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
-              e.currentTarget.style.color = 'var(--color-text-primary)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = searchPanelOpen
-                ? 'var(--color-accent-bg)'
-                : 'var(--color-bg-tertiary)';
-              e.currentTarget.style.color = searchPanelOpen
-                ? 'var(--color-accent)'
-                : 'var(--color-text-muted)';
-            }}
-            title="搜索 (Ctrl+F)"
-          >
-            <Search size={16} />
-            <span className="hidden sm:inline">搜索</span>
-          </button>
-
-          <button
-            onClick={() => setShowDocManager(true)}
-            className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
             style={{
               backgroundColor: 'var(--color-bg-tertiary)',
               color: 'var(--color-text-primary)',
@@ -142,10 +99,92 @@ export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOp
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
             }}
+            title="文档管理"
           >
             <FolderOpen size={16} />
-            <span>文档</span>
+            <span className="hidden sm:inline">文档管理</span>
           </button>
+
+          <button
+            onClick={onToggleVersionPanel}
+            className="relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+            style={{
+              backgroundColor: versionPanelOpen
+                ? 'var(--color-accent-bg)'
+                : 'var(--color-bg-tertiary)',
+              color: versionPanelOpen
+                ? 'var(--color-accent)'
+                : 'var(--color-text-primary)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = versionPanelOpen
+                ? 'var(--color-accent-bg)'
+                : 'var(--color-bg-hover)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = versionPanelOpen
+                ? 'var(--color-accent-bg)'
+                : 'var(--color-bg-tertiary)';
+            }}
+            title="历史版本"
+          >
+            <Clock size={16} />
+            <span className="hidden sm:inline">历史版本</span>
+            {versions.length > 0 && (
+              <span
+                className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center text-[10px] font-semibold rounded-full px-1"
+                style={{
+                  backgroundColor: 'var(--color-accent)',
+                  color: 'white',
+                }}
+              >
+                {versions.length > 9 ? '9+' : versions.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={onToggleSearchPanel}
+            className="relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+            style={{
+              backgroundColor: searchPanelOpen
+                ? 'var(--color-accent-bg)'
+                : 'var(--color-bg-tertiary)',
+              color: searchPanelOpen
+                ? 'var(--color-accent)'
+                : 'var(--color-text-primary)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = searchPanelOpen
+                ? 'var(--color-accent-bg)'
+                : 'var(--color-bg-hover)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = searchPanelOpen
+                ? 'var(--color-accent-bg)'
+                : 'var(--color-bg-tertiary)';
+            }}
+            title="搜索 (Ctrl+F)"
+          >
+            <Search size={16} />
+            <span className="hidden sm:inline">搜索</span>
+            {searchMatchCount > 0 && (
+              <span
+                className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center text-[10px] font-semibold rounded-full px-1"
+                style={{
+                  backgroundColor: 'var(--color-accent)',
+                  color: 'white',
+                }}
+              >
+                {searchMatchCount > 99 ? '99+' : searchMatchCount}
+              </span>
+            )}
+          </button>
+
+          <div
+            className="w-px h-6 mx-1"
+            style={{ backgroundColor: 'var(--color-border)' }}
+          />
 
           <button
             onClick={handleOpenPdfDialog}
@@ -160,8 +199,9 @@ export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOp
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
             }}
+            title="导出 PDF"
           >
-            <FileDown size={16} />
+            <Download size={16} />
             <span className="hidden sm:inline">导出 PDF</span>
           </button>
 
@@ -182,6 +222,7 @@ export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOp
                 e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
               }
             }}
+            title="复制 HTML"
           >
             {copied ? <Check size={16} /> : <Copy size={16} />}
             <span className="hidden sm:inline">{copied ? '已复制' : '复制 HTML'}</span>
@@ -200,6 +241,7 @@ export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOp
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
             }}
+            title={theme === 'light' ? '切换到暗色主题' : '切换到亮色主题'}
           >
             {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
             <span className="hidden sm:inline">{theme === 'light' ? '暗色' : '亮色'}</span>
@@ -208,18 +250,16 @@ export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOp
       </header>
 
       <DocumentManager
-        isOpen={showDocManager}
-        onClose={() => setShowDocManager(false)}
+        isOpen={docManagerOpen}
+        onClose={() => setDocManagerOpen(false)}
       />
 
       <PdfExportDialog
-        isOpen={showPdfDialog}
-        onClose={() => setShowPdfDialog(false)}
-        defaultFilename={currentDoc?.name || 'document'}
-        onExport={handleExportPdf}
-        exporting={exporting}
-        previewElement={previewRef.current}
+        isOpen={pdfDialogOpen}
+        onClose={() => setPdfDialogOpen(false)}
+        previewElement={previewRef}
         outline={outline}
+        defaultFilename={currentDoc?.name || 'document'}
       />
     </>
   );
