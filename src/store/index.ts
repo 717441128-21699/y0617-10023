@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import hljs from 'highlight.js';
-import type { HeadingItem, Theme, Document, DocumentVersion, Folder, SearchMatchItem, SortType, DocumentFilter } from '@/types';
+import type { HeadingItem, Theme, Document, DocumentVersion, Folder, SearchMatchItem, SearchOptions, SearchScope, SortType, DocumentFilter } from '@/types';
 import { defaultMarkdown } from '@/utils/defaultContent';
 
 marked.use(
@@ -31,6 +31,8 @@ interface AppState {
   searchQuery: string;
   searchMatches: SearchMatchItem[];
   currentSearchIndex: number;
+  searchOptions: SearchOptions;
+  selectedDocIds: string[];
   filter: DocumentFilter;
   availableTags: string[];
   currentVersionId: string | null;
@@ -40,6 +42,7 @@ interface AppState {
   parseMarkdown: (markdown: string) => string;
   extractOutline: (markdown: string) => HeadingItem[];
   setSearchQuery: (query: string, previewElement: HTMLElement | null) => void;
+  setSearchOptions: (options: Partial<SearchOptions>) => void;
   setCurrentSearchIndex: (index: number) => void;
   clearSearch: () => void;
   clearSearchHighlightsInDom: (previewElement: HTMLElement | null) => void;
@@ -61,6 +64,15 @@ interface AppState {
   resetFilter: () => void;
   refreshAvailableTags: () => void;
   getFilteredDocuments: () => Document[];
+  toggleDocSelection: (docId: string) => void;
+  setDocSelected: (docId: string, selected: boolean) => void;
+  selectAllFilteredDocs: () => void;
+  clearDocSelection: () => void;
+  batchAddTags: (tags: string[]) => void;
+  batchRemoveTags: (tags: string[]) => void;
+  batchMoveToFolder: (folderId: string | null) => void;
+  batchDelete: () => void;
+  batchArchiveByDate: () => void;
   saveVersion: (description?: string) => void;
   restoreVersion: (versionId: string) => void;
   deleteVersion: (versionId: string) => void;
@@ -299,10 +311,30 @@ const clearSearchHighlights = (element: HTMLElement): void => {
   element.normalize();
 };
 
+const getNodeScope = (node: Text): SearchScope => {
+  let parent: HTMLElement | null = node.parentElement;
+  while (parent) {
+    if (/^H[1-6]$/.test(parent.tagName)) {
+      return 'heading';
+    }
+    if (parent.tagName === 'CODE' || parent.tagName === 'PRE') {
+      return 'code';
+    }
+    parent = parent.parentElement;
+  }
+  return 'content';
+};
+
+const isNodeInScope = (node: Text, scope: SearchScope): boolean => {
+  if (scope === 'all') return true;
+  return getNodeScope(node) === scope;
+};
+
 const highlightSearchMatches = (
   element: HTMLElement,
   query: string,
-  outline: HeadingItem[]
+  outline: HeadingItem[],
+  options: SearchOptions = { scope: 'all', caseSensitive: false, wholeWord: false }
 ): SearchMatchItem[] => {
   const matches: SearchMatchItem[] = [];
   
@@ -323,11 +355,14 @@ const highlightSearchMatches = (
       if (parent.classList.contains('search-highlight') || parent.classList.contains('search-highlight-active')) {
         return NodeFilter.FILTER_REJECT;
       }
+      if (!isNodeInScope(node as Text, options.scope)) {
+        return NodeFilter.FILTER_REJECT;
+      }
       return NodeFilter.FILTER_ACCEPT;
     },
   });
 
-  const textNodes: { node: Text; heading: string }[] = [];
+  const textNodes: { node: Text; heading: string; scope: SearchScope }[] = [];
   let currentHeading = '文档开头';
   let currentNode: Node | null = walker.nextNode();
   
@@ -350,14 +385,24 @@ const highlightSearchMatches = (
         }
       }
     }
-    textNodes.push({ node: currentNode as Text, heading: currentHeading });
+    const textNode = currentNode as Text;
+    textNodes.push({ 
+      node: textNode, 
+      heading: currentHeading,
+      scope: getNodeScope(textNode),
+    });
     currentNode = walker.nextNode();
   }
 
-  const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  let escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (options.wholeWord) {
+    escapedQuery = `\\b${escapedQuery}\\b`;
+  }
+  const flags = options.caseSensitive ? 'g' : 'gi';
+  const regex = new RegExp(escapedQuery, flags);
   let matchIndex = 0;
 
-  for (const { node, heading } of textNodes) {
+  for (const { node, heading, scope } of textNodes) {
     const text = node.nodeValue;
     if (!text) continue;
 
@@ -389,6 +434,7 @@ const highlightSearchMatches = (
         text: match[0],
         context,
         heading,
+        scope,
       });
       matchIndex++;
       lastIndex = match.index + match[0].length;
@@ -442,12 +488,18 @@ export const useAppStore = create<AppState>((set, get) => {
     searchQuery: '',
     searchMatches: [],
     currentSearchIndex: -1,
+    searchOptions: {
+      scope: 'all',
+      caseSensitive: false,
+      wholeWord: false,
+    },
+    selectedDocIds: [],
     filter: savedFilter,
     availableTags: allTags,
     currentVersionId: null,
 
     setMarkdown: (markdown: string) => {
-      const { currentDocId, documents, searchQuery, clearSearchHighlightsInDom } = get();
+      const { currentDocId, documents, searchQuery, clearSearchHighlightsInDom, searchOptions } = get();
       const html = get().parseMarkdown(markdown);
       const outline = get().extractOutline(markdown);
       
@@ -499,7 +551,7 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     setSearchQuery: (query: string, previewElement: HTMLElement | null) => {
-      const { searchQuery, clearSearchHighlightsInDom, outline } = get();
+      const { searchQuery, clearSearchHighlightsInDom, outline, searchOptions } = get();
       
       const markdownBody = previewElement?.querySelector('.markdown-body') as HTMLElement | null;
       
@@ -517,7 +569,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
       let matches: SearchMatchItem[] = [];
       if (markdownBody) {
-        matches = highlightSearchMatches(markdownBody, query, outline);
+        matches = highlightSearchMatches(markdownBody, query, outline, searchOptions);
       }
 
       set({
@@ -565,6 +617,201 @@ export const useAppStore = create<AppState>((set, get) => {
         clearSearchHighlights(previewEl);
       }
       set({ searchQuery: '', searchMatches: [], currentSearchIndex: -1 });
+    },
+
+    setSearchOptions: (options: Partial<SearchOptions>) => {
+      const { searchOptions, searchQuery } = get();
+      const newOptions = { ...searchOptions, ...options };
+      set({ searchOptions: newOptions });
+      
+      if (searchQuery && typeof setTimeout) {
+        setTimeout(() => {
+          const currentState = get();
+          if (currentState.searchQuery === searchQuery) {
+            const previewEl = document.querySelector('.markdown-body') as HTMLElement | null;
+            if (previewEl) {
+              clearSearchHighlights(previewEl);
+              currentState.setSearchQuery(searchQuery, previewEl.parentElement);
+            }
+          }
+        }, 0);
+      }
+    },
+
+    toggleDocSelection: (docId: string) => {
+      const { selectedDocIds } = get();
+      const isSelected = selectedDocIds.includes(docId);
+      if (isSelected) {
+        set({ selectedDocIds: selectedDocIds.filter((id) => id !== docId) });
+      } else {
+        set({ selectedDocIds: [...selectedDocIds, docId] });
+      }
+    },
+
+    setDocSelected: (docId: string, selected: boolean) => {
+      const { selectedDocIds } = get();
+      const isSelected = selectedDocIds.includes(docId);
+      if (selected && !isSelected) {
+        set({ selectedDocIds: [...selectedDocIds, docId] });
+      } else if (!selected && isSelected) {
+        set({ selectedDocIds: selectedDocIds.filter((id) => id !== docId) });
+      }
+    },
+
+    selectAllFilteredDocs: () => {
+      const filtered = get().getFilteredDocuments();
+      set({ selectedDocIds: filtered.map((d) => d.id) });
+    },
+
+    clearDocSelection: () => {
+      set({ selectedDocIds: [] });
+    },
+
+    batchAddTags: (tags: string[]) => {
+      const { selectedDocIds, documents, currentDocId } = get();
+      if (selectedDocIds.length === 0) return;
+      
+      const cleanTags = tags.map((t) => t.trim()).filter((t) => t);
+      if (cleanTags.length === 0) return;
+
+      const updatedDocs = documents.map((doc) => {
+        if (selectedDocIds.includes(doc.id)) {
+          const newTags = [...doc.tags];
+          for (const tag of cleanTags) {
+            if (!newTags.includes(tag)) {
+              newTags.push(tag);
+            }
+          }
+          return { ...doc, tags: newTags, updatedAt: Date.now() };
+        }
+        return doc;
+      });
+
+      saveDocumentsToStorage(updatedDocs, currentDocId);
+      const allTags = Array.from(new Set(updatedDocs.flatMap((d) => d.tags)));
+      set({ documents: updatedDocs, availableTags: allTags });
+    },
+
+    batchRemoveTags: (tags: string[]) => {
+      const { selectedDocIds, documents, currentDocId, filter } = get();
+      if (selectedDocIds.length === 0) return;
+
+      const updatedDocs = documents.map((doc) => {
+        if (selectedDocIds.includes(doc.id)) {
+          return { 
+            ...doc, 
+            tags: doc.tags.filter((t) => !tags.includes(t)), 
+            updatedAt: Date.now() 
+          };
+        }
+        return doc;
+      });
+
+      saveDocumentsToStorage(updatedDocs, currentDocId);
+      const allTags = Array.from(new Set(updatedDocs.flatMap((d) => d.tags)));
+      
+      set({
+        documents: updatedDocs,
+        availableTags: allTags,
+      });
+
+      if (filter.tag && !allTags.includes(filter.tag)) {
+        get().setFilterTag(null);
+      }
+    },
+
+    batchMoveToFolder: (folderId: string | null) => {
+      const { selectedDocIds, documents, currentDocId } = get();
+      if (selectedDocIds.length === 0) return;
+
+      const updatedDocs = documents.map((doc) =>
+        selectedDocIds.includes(doc.id)
+          ? { ...doc, folderId, updatedAt: Date.now() }
+          : doc
+      );
+      saveDocumentsToStorage(updatedDocs, currentDocId);
+      set({ documents: updatedDocs });
+    },
+
+    batchDelete: () => {
+      const { selectedDocIds, documents, currentDocId, folders } = get();
+      if (selectedDocIds.length === 0) return;
+      if (documents.length - selectedDocIds.length < 1) return;
+
+      const updatedDocs = documents.filter((doc) => !selectedDocIds.includes(doc.id));
+      let newCurrentId = currentDocId;
+      
+      if (selectedDocIds.includes(currentDocId)) {
+        newCurrentId = updatedDocs[0].id;
+      }
+
+      saveDocumentsToStorage(updatedDocs, newCurrentId);
+      const allTags = Array.from(new Set(updatedDocs.flatMap((d) => d.tags)));
+      
+      if (selectedDocIds.includes(currentDocId)) {
+        const newDoc = updatedDocs[0];
+        const html = parseMarkdownToHtml(newDoc.content);
+        const outline = extractOutlineFromMarkdown(newDoc.content);
+        set({
+          documents: updatedDocs,
+          currentDocId: newCurrentId,
+          markdown: newDoc.content,
+          html,
+          outline,
+          searchQuery: '',
+          searchMatches: [],
+          currentSearchIndex: -1,
+          availableTags: allTags,
+          currentVersionId: null,
+          selectedDocIds: [],
+        });
+      } else {
+        set({ 
+          documents: updatedDocs, 
+          availableTags: allTags,
+          selectedDocIds: [],
+        });
+      }
+
+      const { filter } = get();
+      if (filter.tag && !allTags.includes(filter.tag)) {
+        get().setFilterTag(null);
+      }
+    },
+
+    batchArchiveByDate: () => {
+      const { selectedDocIds, documents, currentDocId, folders, createFolder, moveDocument } = get();
+      if (selectedDocIds.length === 0) return;
+
+      const folderMap = new Map<string, string>();
+      for (const folder of folders) {
+        folderMap.set(folder.name, folder.id);
+      }
+
+      const selectedDocs = documents.filter((d) => selectedDocIds.includes(d.id));
+      const localCreateFolder = createFolder;
+      const localMoveDocument = moveDocument;
+
+      for (const doc of selectedDocs) {
+        const date = new Date(doc.updatedAt);
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const folderName = `${year}年${month}月`;
+
+        let folderId = folderMap.get(folderName);
+        if (!folderId) {
+          localCreateFolder(folderName);
+          const newFolder = get().folders.find((f) => f.name === folderName);
+          if (newFolder) {
+            folderId = newFolder.id;
+            folderMap.set(folderName, folderId);
+          }
+        }
+
+        if (folderId) {
+          localMoveDocument(doc.id, folderId);
+        }
+      }
     },
 
     createDocument: (folderId: string | null = null) => {

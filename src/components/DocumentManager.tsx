@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Folder,
   FileText,
@@ -12,7 +12,15 @@ import {
   Tag,
   Clock,
   Calendar,
+  CheckSquare,
+  Square,
+  Archive,
+  MoveRight,
+  Layers,
+  List,
+  RefreshCw,
   Check,
+  MoreHorizontal,
 } from 'lucide-react';
 import { useAppStore } from '@/store';
 import type { Document, Folder as FolderType, SortType } from '@/types';
@@ -29,6 +37,7 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
     filter,
     availableTags,
     currentDocId,
+    selectedDocIds,
     setFilterKeyword,
     setFilterTag,
     setFilterFolder,
@@ -45,6 +54,15 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
     renameDocument,
     deleteDocument,
     getFilteredDocuments,
+    toggleDocSelection,
+    setDocSelected,
+    selectAllFilteredDocs,
+    clearDocSelection,
+    batchAddTags,
+    batchRemoveTags,
+    batchMoveToFolder,
+    batchDelete,
+    batchArchiveByDate,
   } = useAppStore();
 
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
@@ -57,8 +75,63 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
   const [tagInputValue, setTagInputValue] = useState('');
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingFolderName, setEditingFolderName] = useState('');
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchMenuOpen, setBatchMenuOpen] = useState(false);
+  const [showBatchTagModal, setShowBatchTagModal] = useState(false);
+  const [showBatchMoveModal, setShowBatchMoveModal] = useState(false);
+  const [batchTagInput, setBatchTagInput] = useState('');
+  const [batchFolderId, setBatchFolderId] = useState<string | null>(null);
+  const [batchNewFolderName, setBatchNewFolderName] = useState('');
+  const [showBatchNewFolder, setShowBatchNewFolder] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    danger?: boolean;
+  } | null>(null);
 
   const filteredDocs = getFilteredDocuments();
+
+  const selectedCount = useMemo(() => selectedDocIds.length, [selectedDocIds]);
+  const totalCount = useMemo(() => filteredDocs.length, [filteredDocs]);
+
+  const batchTagPreview = useMemo(() => {
+    if (!batchTagInput.trim()) return [];
+    return batchTagInput
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t);
+  }, [batchTagInput]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    if (!isOpen && batchMode) {
+      clearDocSelection();
+      setBatchMode(false);
+      setShowBatchTagModal(false);
+      setShowBatchMoveModal(false);
+    }
+  }, [isOpen, batchMode, clearDocSelection]);
+
+  const showToast = (message: string) => {
+    setToast(message);
+  };
+
+  const handleClose = () => {
+    if (batchMode) {
+      clearDocSelection();
+      setBatchMode(false);
+    }
+    setShowBatchTagModal(false);
+    setShowBatchMoveModal(false);
+    onClose();
+  };
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -100,13 +173,20 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
   const handleDeleteDoc = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (documents.length <= 1) {
-      alert('至少需要保留一个文档');
+      showToast('至少需要保留一个文档');
       return;
     }
-    const doc = documents.find(d => d.id === id);
-    if (confirm(`确定要删除文档"${doc?.name}"吗？`)) {
-      deleteDocument(id);
-    }
+    const doc = documents.find((d) => d.id === id);
+    setConfirmDialog({
+      title: '删除文档',
+      message: `确定要删除文档"${doc?.name}"吗？`,
+      danger: true,
+      onConfirm: () => {
+        deleteDocument(id);
+        setConfirmDialog(null);
+        showToast('文档已删除');
+      },
+    });
   };
 
   const handleSwitchDoc = (id: string) => {
@@ -114,6 +194,25 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
       switchDocument(id);
       onClose();
     }
+  };
+
+  const handleRowClick = (doc: Document, e: React.MouseEvent) => {
+    if (batchMode) {
+      if ((e.target as HTMLElement).closest('[data-checkbox-area]')) {
+        return;
+      }
+      handleSwitchDoc(doc.id);
+    } else {
+      handleSwitchDoc(doc.id);
+    }
+  };
+
+  const handleCheckboxClick = (docId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!batchMode) {
+      setBatchMode(true);
+    }
+    toggleDocSelection(docId);
   };
 
   const handleAddTag = (docId: string, e: React.MouseEvent) => {
@@ -174,10 +273,17 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
 
   const handleDeleteFolder = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const folder = folders.find(f => f.id === id);
-    if (confirm(`确定要删除分组"${folder?.name}"吗？该分组下的文档将变为未分组状态。`)) {
-      deleteFolder(id);
-    }
+    const folder = folders.find((f) => f.id === id);
+    setConfirmDialog({
+      title: '删除分组',
+      message: `确定要删除分组"${folder?.name}"吗？该分组下的文档将变为未分组状态。`,
+      danger: true,
+      onConfirm: () => {
+        deleteFolder(id);
+        setConfirmDialog(null);
+        showToast('分组已删除');
+      },
+    });
   };
 
   const handleMoveDocument = (docId: string, folderId: string | null) => {
@@ -207,6 +313,122 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
     }
   };
 
+  const handleToggleBatchMode = () => {
+    if (batchMode) {
+      clearDocSelection();
+    }
+    setBatchMode(!batchMode);
+    setBatchMenuOpen(false);
+    setShowBatchTagModal(false);
+    setShowBatchMoveModal(false);
+  };
+
+  const handleSelectAll = () => {
+    selectAllFilteredDocs();
+  };
+
+  const handleClearSelection = () => {
+    clearDocSelection();
+  };
+
+  const handleBatchAddTags = () => {
+    setShowBatchTagModal(true);
+    setBatchTagInput('');
+  };
+
+  const handleConfirmBatchAddTags = () => {
+    const tags = batchTagInput
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t);
+    if (tags.length === 0) {
+      showToast('请输入至少一个标签');
+      return;
+    }
+    batchAddTags(tags);
+    const count = selectedDocIds.length;
+    setShowBatchTagModal(false);
+    setBatchTagInput('');
+    showToast(`成功添加标签到 ${count} 篇文档`);
+  };
+
+  const handleBatchRemoveTag = (tag: string) => {
+    batchRemoveTags([tag]);
+    showToast(`已从选中文档移除标签"${tag}"`);
+  };
+
+  const handleBatchMove = () => {
+    setShowBatchMoveModal(true);
+    setBatchFolderId(null);
+    setBatchNewFolderName('');
+    setShowBatchNewFolder(false);
+  };
+
+  const handleConfirmBatchMove = () => {
+    let targetFolderId = batchFolderId;
+    if (showBatchNewFolder && batchNewFolderName.trim()) {
+      createFolder(batchNewFolderName.trim());
+      const newFolder = [...folders].find(
+        (f) => f.name === batchNewFolderName.trim()
+      );
+      if (newFolder) {
+        targetFolderId = newFolder.id;
+      }
+    }
+    batchMoveToFolder(targetFolderId);
+    const count = selectedDocIds.length;
+    setShowBatchMoveModal(false);
+    setBatchFolderId(null);
+    setBatchNewFolderName('');
+    setShowBatchNewFolder(false);
+    showToast(`已移动 ${count} 篇文档`);
+  };
+
+  const handleBatchArchive = () => {
+    if (selectedCount === 0) {
+      showToast('请先选择文档');
+      return;
+    }
+    const monthGroups = new Set<string>();
+    const selectedDocs = documents.filter((d) => selectedDocIds.includes(d.id));
+    for (const doc of selectedDocs) {
+      const date = new Date(doc.updatedAt);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      monthGroups.add(`${year}年${month}月`);
+    }
+    setConfirmDialog({
+      title: '按时间归档',
+      message: `将把 ${selectedCount} 篇文档按更新时间归档到 ${monthGroups.size} 个月份分组中，是否继续？`,
+      onConfirm: () => {
+        batchArchiveByDate();
+        setConfirmDialog(null);
+        showToast(`已归档 ${selectedCount} 篇文档到 ${monthGroups.size} 个分组`);
+      },
+    });
+  };
+
+  const handleBatchDelete = () => {
+    if (selectedCount === 0) {
+      showToast('请先选择文档');
+      return;
+    }
+    if (documents.length - selectedCount < 1) {
+      showToast('至少需要保留一个文档');
+      return;
+    }
+    setConfirmDialog({
+      title: '批量删除',
+      message: `确定要删除选中的 ${selectedCount} 篇文档吗？此操作不可恢复。`,
+      danger: true,
+      onConfirm: () => {
+        batchDelete();
+        setConfirmDialog(null);
+        showToast('已删除选中文档');
+      },
+    });
+  };
+
   const sortOptions: { value: SortType; label: string; icon: typeof Clock }[] = [
     { value: 'updatedAt', label: '更新时间', icon: Clock },
     { value: 'name', label: '标题', icon: FileText },
@@ -215,17 +437,19 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
 
   if (!isOpen) return null;
 
+  const isDocSelected = (docId: string) => selectedDocIds.includes(docId);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
+      onClick={handleClose}
       style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
     >
       <div
-        className="w-full max-w-[750px] flex flex-col rounded-xl shadow-2xl overflow-hidden"
+        className="w-full max-w-[800px] flex flex-col rounded-xl shadow-2xl overflow-hidden"
         style={{
           backgroundColor: 'var(--color-bg-secondary)',
-          height: '70vh',
+          height: '75vh',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -251,20 +475,223 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
               {filteredDocs.length} 篇
             </span>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg transition-colors"
-            style={{ color: 'var(--color-text-muted)' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleToggleBatchMode}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150"
+              style={{
+                backgroundColor: batchMode
+                  ? 'var(--color-accent-bg)'
+                  : 'var(--color-bg-tertiary)',
+                color: batchMode
+                  ? 'var(--color-accent)'
+                  : 'var(--color-text-secondary)',
+              }}
+              onMouseEnter={(e) => {
+                if (!batchMode) {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!batchMode) {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
+                }
+              }}
+            >
+              {batchMode ? <CheckSquare size={14} /> : <Square size={14} />}
+              {batchMode ? '退出批量' : '批量模式'}
+            </button>
+
+            <button
+              onClick={handleClose}
+              className="p-1.5 rounded-lg transition-colors"
+              style={{ color: 'var(--color-text-muted)' }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        {toast && (
+          <div
+            className="shrink-0 px-4 py-2 text-sm text-center animate-in fade-in slide-in-from-top-2"
+            style={{
+              backgroundColor: 'rgba(34, 197, 94, 0.1)',
+              color: '#22c55e',
+              borderBottom: '1px solid var(--color-border)',
             }}
           >
-            <X size={18} />
-          </button>
-        </div>
+            {toast}
+          </div>
+        )}
+
+        {batchMode && (
+          <div
+            className="shrink-0 px-5 py-3 border-b flex items-center gap-4 flex-wrap"
+            style={{
+              borderColor: 'var(--color-border)',
+              backgroundColor: 'var(--color-bg-tertiary)',
+            }}
+          >
+            <div
+              className="text-sm font-medium"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              已选中{' '}
+              <span
+                className="font-bold"
+                style={{ color: 'var(--color-accent)' }}
+              >
+                {selectedCount}
+              </span>{' '}
+              / 共 {totalCount} 篇
+            </div>
+
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                onClick={handleSelectAll}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150"
+                style={{
+                  backgroundColor: 'var(--color-bg-secondary)',
+                  color: 'var(--color-text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-accent-bg)';
+                  e.currentTarget.style.color = 'var(--color-accent)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
+                }}
+              >
+                <List size={12} />
+                全选
+              </button>
+
+              <button
+                onClick={handleClearSelection}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150"
+                style={{
+                  backgroundColor: 'var(--color-bg-secondary)',
+                  color: 'var(--color-text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)';
+                }}
+              >
+                <RefreshCw size={12} />
+                清除选择
+              </button>
+            </div>
+
+            <div
+              className="w-px h-5 shrink-0"
+              style={{ backgroundColor: 'var(--color-border)' }}
+            />
+
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                onClick={handleBatchAddTags}
+                disabled={selectedCount === 0}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: 'var(--color-bg-secondary)',
+                  color: 'var(--color-text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedCount > 0) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-accent-bg)';
+                    e.currentTarget.style.color = 'var(--color-accent)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
+                }}
+              >
+                <Tag size={12} />
+                批量加标签
+              </button>
+
+              <button
+                onClick={handleBatchMove}
+                disabled={selectedCount === 0}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: 'var(--color-bg-secondary)',
+                  color: 'var(--color-text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedCount > 0) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-accent-bg)';
+                    e.currentTarget.style.color = 'var(--color-accent)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
+                }}
+              >
+                <MoveRight size={12} />
+                批量移动
+              </button>
+
+              <button
+                onClick={handleBatchArchive}
+                disabled={selectedCount === 0}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: 'var(--color-bg-secondary)',
+                  color: 'var(--color-text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedCount > 0) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-accent-bg)';
+                    e.currentTarget.style.color = 'var(--color-accent)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)';
+                  e.currentTarget.style.color = 'var(--color-text-secondary)';
+                }}
+              >
+                <Archive size={12} />
+                按时间归档
+              </button>
+
+              <button
+                onClick={handleBatchDelete}
+                disabled={selectedCount === 0}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                  color: '#ef4444',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedCount > 0) {
+                    e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                }}
+              >
+                <Trash2 size={12} />
+                批量删除
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-1 overflow-hidden">
           <div
@@ -286,12 +713,14 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
                 onClick={() => setFilterFolder(null)}
                 className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm font-medium transition-all duration-150 mb-1"
                 style={{
-                  backgroundColor: filter.folderId === null
-                    ? 'var(--color-accent-bg)'
-                    : 'transparent',
-                  color: filter.folderId === null
-                    ? 'var(--color-accent)'
-                    : 'var(--color-text-secondary)',
+                  backgroundColor:
+                    filter.folderId === null
+                      ? 'var(--color-accent-bg)'
+                      : 'transparent',
+                  color:
+                    filter.folderId === null
+                      ? 'var(--color-accent)'
+                      : 'var(--color-text-secondary)',
                 }}
                 onMouseEnter={(e) => {
                   if (filter.folderId !== null) {
@@ -304,7 +733,7 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
                   }
                 }}
               >
-                <Folder size={14} />
+                <Layers size={14} />
                 <span className="flex-1 text-left truncate">全部文档</span>
               </button>
 
@@ -348,12 +777,14 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
                       <div
                         className="group flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm cursor-pointer transition-all duration-150"
                         style={{
-                          backgroundColor: filter.folderId === folder.id
-                            ? 'var(--color-accent-bg)'
-                            : 'transparent',
-                          color: filter.folderId === folder.id
-                            ? 'var(--color-accent)'
-                            : 'var(--color-text-secondary)',
+                          backgroundColor:
+                            filter.folderId === folder.id
+                              ? 'var(--color-accent-bg)'
+                              : 'transparent',
+                          color:
+                            filter.folderId === folder.id
+                              ? 'var(--color-accent)'
+                              : 'var(--color-text-secondary)',
                         }}
                         onClick={() => setFilterFolder(folder.id)}
                         onMouseEnter={(e) => {
@@ -530,7 +961,9 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
                   高级筛选
                   <ChevronDown
                     size={14}
-                    className={`transition-transform duration-200 ${showAdvancedFilter ? 'rotate-180' : ''}`}
+                    className={`transition-transform duration-200 ${
+                      showAdvancedFilter ? 'rotate-180' : ''
+                    }`}
                   />
                 </button>
               </div>
@@ -645,12 +1078,14 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
                     onClick={() => setFilterTag(null)}
                     className="px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-150"
                     style={{
-                      backgroundColor: filter.tag === null
-                        ? 'var(--color-accent-bg)'
-                        : 'var(--color-bg-tertiary)',
-                      color: filter.tag === null
-                        ? 'var(--color-accent)'
-                        : 'var(--color-text-secondary)',
+                      backgroundColor:
+                        filter.tag === null
+                          ? 'var(--color-accent-bg)'
+                          : 'var(--color-bg-tertiary)',
+                      color:
+                        filter.tag === null
+                          ? 'var(--color-accent)'
+                          : 'var(--color-text-secondary)',
                     }}
                   >
                     全部
@@ -697,174 +1132,312 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {filteredDocs.map((doc) => (
-                    <div
-                      key={doc.id}
-                      onClick={() => handleSwitchDoc(doc.id)}
-                      className="p-3 rounded-lg cursor-pointer transition-all duration-150 border"
-                      style={{
-                        backgroundColor: doc.id === currentDocId
-                          ? 'var(--color-accent-bg)'
-                          : 'var(--color-bg-tertiary)',
-                        borderColor: doc.id === currentDocId
-                          ? 'var(--color-accent)'
-                          : 'var(--color-border)',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (doc.id !== currentDocId) {
-                          e.currentTarget.style.backgroundColor =
-                            'var(--color-bg-hover)';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (doc.id !== currentDocId) {
-                          e.currentTarget.style.backgroundColor =
-                            'var(--color-bg-tertiary)';
-                        }
-                      }}
-                    >
-                      <div className="flex items-start gap-3">
-                        <FileText
-                          size={18}
-                          className="mt-0.5 shrink-0"
-                          style={{
-                            color:
-                              doc.id === currentDocId
-                                ? 'var(--color-accent)'
-                                : 'var(--color-text-muted)',
-                          }}
-                        />
+                  {filteredDocs.map((doc) => {
+                    const selected = isDocSelected(doc.id);
+                    const isCurrent = doc.id === currentDocId;
 
-                        <div className="flex-1 min-w-0">
-                          {editingDocId === doc.id ? (
-                            <form
-                              onSubmit={(e) => handleSaveRenameDoc(doc.id, e)}
-                              className="flex items-center gap-2"
-                              onClick={(e) => e.stopPropagation()}
+                    return (
+                      <div
+                        key={doc.id}
+                        onClick={(e) => handleRowClick(doc, e)}
+                        className="p-3 rounded-lg cursor-pointer transition-all duration-150 border relative overflow-hidden"
+                        style={{
+                          backgroundColor: selected
+                            ? 'var(--color-accent-bg)'
+                            : isCurrent
+                            ? 'var(--color-accent-bg)'
+                            : 'var(--color-bg-tertiary)',
+                          borderColor: selected
+                            ? 'var(--color-accent)'
+                            : isCurrent
+                            ? 'var(--color-accent)'
+                            : 'var(--color-border)',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!selected && !isCurrent) {
+                            e.currentTarget.style.backgroundColor =
+                              'var(--color-bg-hover)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!selected && !isCurrent) {
+                            e.currentTarget.style.backgroundColor =
+                              'var(--color-bg-tertiary)';
+                          }
+                        }}
+                      >
+                        {selected && (
+                          <div
+                            className="absolute left-0 top-0 bottom-0 w-1"
+                            style={{ backgroundColor: 'var(--color-accent)' }}
+                          />
+                        )}
+
+                        <div className="flex items-start gap-3">
+                          {batchMode && (
+                            <div
+                              data-checkbox-area
+                              onClick={(e) => handleCheckboxClick(doc.id, e)}
+                              className="shrink-0 mt-0.5 cursor-pointer p-0.5 rounded transition-colors"
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor =
+                                  'var(--color-bg-hover)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = 'transparent';
+                              }}
                             >
-                              <input
-                                autoFocus
-                                value={editingName}
-                                onChange={(e) => setEditingName(e.target.value)}
-                                className="flex-1 px-2 py-1 rounded border text-sm outline-none"
-                                style={{
-                                  backgroundColor: 'var(--color-bg-secondary)',
-                                  borderColor: 'var(--color-border)',
-                                  color: 'var(--color-text-primary)',
-                                }}
-                              />
-                              <button
-                                type="submit"
-                                className="p-1 rounded"
-                                style={{ color: 'var(--color-accent)' }}
-                              >
-                                <Check size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                className="p-1 rounded"
-                                style={{ color: 'var(--color-text-muted)' }}
-                                onClick={handleCancelRenameDoc}
-                              >
-                                <X size={14} />
-                              </button>
-                            </form>
-                          ) : (
-                            <>
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className="text-sm font-medium truncate"
-                                  style={{
-                                    color:
-                                      doc.id === currentDocId
-                                        ? 'var(--color-accent)'
-                                        : 'var(--color-text-primary)',
-                                  }}
-                                >
-                                  {doc.name}
-                                </span>
-                                {doc.id === currentDocId && (
-                                  <span
-                                    className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
-                                    style={{
-                                      backgroundColor: 'var(--color-accent)',
-                                      color: '#ffffff',
-                                    }}
-                                  >
-                                    当前
-                                  </span>
-                                )}
-                              </div>
-                              <div
-                                className="text-xs mt-0.5 flex items-center gap-1"
-                                style={{ color: 'var(--color-text-muted)' }}
-                              >
-                                <Clock size={10} />
-                                更新于 {formatDate(doc.updatedAt)}
-                              </div>
-                            </>
+                              {selected ? (
+                                <CheckSquare
+                                  size={16}
+                                  style={{ color: 'var(--color-accent)' }}
+                                />
+                              ) : (
+                                <Square
+                                  size={16}
+                                  style={{ color: 'var(--color-text-muted)' }}
+                                />
+                              )}
+                            </div>
                           )}
 
-                          {editingDocId !== doc.id && (
-                            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                              {doc.tags.map((tag) => (
-                                <span
-                                  key={tag}
-                                  className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px]"
+                          <FileText
+                            size={18}
+                            className="mt-0.5 shrink-0"
+                            style={{
+                              color:
+                                isCurrent || selected
+                                  ? 'var(--color-accent)'
+                                  : 'var(--color-text-muted)',
+                            }}
+                          />
+
+                          <div className="flex-1 min-w-0">
+                            {editingDocId === doc.id ? (
+                              <form
+                                onSubmit={(e) => handleSaveRenameDoc(doc.id, e)}
+                                className="flex items-center gap-2"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  autoFocus
+                                  value={editingName}
+                                  onChange={(e) => setEditingName(e.target.value)}
+                                  className="flex-1 px-2 py-1 rounded border text-sm outline-none"
                                   style={{
                                     backgroundColor: 'var(--color-bg-secondary)',
-                                    color: 'var(--color-text-secondary)',
+                                    borderColor: 'var(--color-border)',
+                                    color: 'var(--color-text-primary)',
                                   }}
+                                />
+                                <button
+                                  type="submit"
+                                  className="p-1 rounded"
+                                  style={{ color: 'var(--color-accent)' }}
                                 >
-                                  <Tag size={9} />
-                                  {tag}
-                                  <button
-                                    onClick={(e) => handleRemoveTag(doc.id, tag, e)}
-                                    className="ml-0.5 rounded hover:opacity-70"
+                                  <Check size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1 rounded"
+                                  style={{ color: 'var(--color-text-muted)' }}
+                                  onClick={handleCancelRenameDoc}
+                                >
+                                  <X size={14} />
+                                </button>
+                              </form>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className="text-sm font-medium truncate"
+                                    style={{
+                                      color:
+                                        isCurrent || selected
+                                          ? 'var(--color-accent)'
+                                          : 'var(--color-text-primary)',
+                                    }}
                                   >
-                                    <X size={10} />
-                                  </button>
-                                </span>
-                              ))}
-
-                              {tagInputDocId === doc.id ? (
-                                <form
-                                  onSubmit={(e) => handleSaveTag(doc.id, e)}
-                                  className="flex items-center gap-1"
-                                  onClick={(e) => e.stopPropagation()}
+                                    {doc.name}
+                                  </span>
+                                  {isCurrent && (
+                                    <span
+                                      className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+                                      style={{
+                                        backgroundColor: 'var(--color-accent)',
+                                        color: '#ffffff',
+                                      }}
+                                    >
+                                      当前
+                                    </span>
+                                  )}
+                                </div>
+                                <div
+                                  className="text-xs mt-0.5 flex items-center gap-1"
+                                  style={{ color: 'var(--color-text-muted)' }}
                                 >
-                                  <input
-                                    autoFocus
-                                    value={tagInputValue}
-                                    onChange={(e) => setTagInputValue(e.target.value)}
-                                    placeholder="标签名"
-                                    className="w-20 px-1.5 py-0.5 rounded border text-xs outline-none"
+                                  <Clock size={10} />
+                                  更新于 {formatDate(doc.updatedAt)}
+                                </div>
+                              </>
+                            )}
+
+                            {editingDocId !== doc.id && (
+                              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                                {doc.tags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px]"
                                     style={{
                                       backgroundColor: 'var(--color-bg-secondary)',
-                                      borderColor: 'var(--color-border)',
-                                      color: 'var(--color-text-primary)',
+                                      color: 'var(--color-text-secondary)',
                                     }}
-                                  />
+                                  >
+                                    <Tag size={9} />
+                                    {tag}
+                                    <button
+                                      onClick={(e) => handleRemoveTag(doc.id, tag, e)}
+                                      className="ml-0.5 rounded hover:opacity-70"
+                                    >
+                                      <X size={10} />
+                                    </button>
+                                  </span>
+                                ))}
+
+                                {tagInputDocId === doc.id ? (
+                                  <form
+                                    onSubmit={(e) => handleSaveTag(doc.id, e)}
+                                    className="flex items-center gap-1"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <input
+                                      autoFocus
+                                      value={tagInputValue}
+                                      onChange={(e) => setTagInputValue(e.target.value)}
+                                      placeholder="标签名"
+                                      className="w-20 px-1.5 py-0.5 rounded border text-xs outline-none"
+                                      style={{
+                                        backgroundColor: 'var(--color-bg-secondary)',
+                                        borderColor: 'var(--color-border)',
+                                        color: 'var(--color-text-primary)',
+                                      }}
+                                    />
+                                    <button
+                                      type="submit"
+                                      className="p-0.5 rounded"
+                                      style={{ color: 'var(--color-accent)' }}
+                                    >
+                                      <Check size={12} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="p-0.5 rounded"
+                                      style={{ color: 'var(--color-text-muted)' }}
+                                      onClick={handleCancelTag}
+                                    >
+                                      <X size={12} />
+                                    </button>
+                                  </form>
+                                ) : (
                                   <button
-                                type="submit"
-                                className="p-0.5 rounded"
-                                style={{ color: 'var(--color-accent)' }}
-                              >
-                                <Check size={12} />
-                              </button>
-                              <button
-                                type="button"
-                                className="p-0.5 rounded"
-                                style={{ color: 'var(--color-text-muted)' }}
-                                onClick={handleCancelTag}
-                              >
-                                <X size={12} />
-                              </button>
-                            </form>
-                          ) : (
-                            <button
-                              onClick={(e) => handleAddTag(doc.id, e)}
-                                  className="flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] transition-colors"
+                                    onClick={(e) => handleAddTag(doc.id, e)}
+                                    className="flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] transition-colors"
+                                    style={{
+                                      backgroundColor: 'var(--color-bg-secondary)',
+                                      color: 'var(--color-text-muted)',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      e.currentTarget.style.color =
+                                        'var(--color-accent)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.color =
+                                        'var(--color-text-muted)';
+                                    }}
+                                  >
+                                    <Plus size={10} />
+                                    标签
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {editingDocId !== doc.id && tagInputDocId !== doc.id && (
+                            <div className="flex flex-col items-end gap-1.5 shrink-0">
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={(e) => handleStartRenameDoc(doc, e)}
+                                  className="p-1.5 rounded-md transition-colors"
+                                  style={{ color: 'var(--color-text-muted)' }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor =
+                                      'var(--color-bg-hover)';
+                                    e.currentTarget.style.color =
+                                      'var(--color-accent)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor =
+                                      'transparent';
+                                    e.currentTarget.style.color =
+                                      'var(--color-text-muted)';
+                                  }}
+                                >
+                                  <Edit3 size={13} />
+                                </button>
+                                <button
+                                  onClick={(e) => handleDeleteDoc(doc.id, e)}
+                                  className="p-1.5 rounded-md transition-colors"
+                                  style={{ color: 'var(--color-text-muted)' }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor =
+                                      'var(--color-bg-hover)';
+                                    e.currentTarget.style.color = '#ef4444';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor =
+                                      'transparent';
+                                    e.currentTarget.style.color =
+                                      'var(--color-text-muted)';
+                                  }}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+
+                              {movingDocId === doc.id ? (
+                                <select
+                                  value={doc.folderId || ''}
+                                  onChange={(e) =>
+                                    handleMoveDocument(
+                                      doc.id,
+                                      e.target.value || null
+                                    )
+                                  }
+                                  onClick={(e) => e.stopPropagation()}
+                                  onBlur={() => setMovingDocId(null)}
+                                  className="text-xs px-1.5 py-1 rounded border outline-none"
+                                  style={{
+                                    backgroundColor: 'var(--color-bg-secondary)',
+                                    borderColor: 'var(--color-border)',
+                                    color: 'var(--color-text-primary)',
+                                  }}
+                                  autoFocus
+                                >
+                                  <option value="">无分组</option>
+                                  {folders.map((folder) => (
+                                    <option key={folder.id} value={folder.id}>
+                                      {folder.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setMovingDocId(doc.id);
+                                  }}
+                                  className="text-[10px] px-2 py-0.5 rounded transition-colors"
                                   style={{
                                     backgroundColor: 'var(--color-bg-secondary)',
                                     color: 'var(--color-text-muted)',
@@ -878,116 +1451,465 @@ export default function DocumentManager({ isOpen, onClose }: DocumentManagerProp
                                       'var(--color-text-muted)';
                                   }}
                                 >
-                                  <Plus size={10} />
-                                  标签
+                                  移动到分组
                                 </button>
                               )}
                             </div>
                           )}
                         </div>
-
-                        {editingDocId !== doc.id && tagInputDocId !== doc.id && (
-                          <div className="flex flex-col items-end gap-1.5 shrink-0">
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={(e) => handleStartRenameDoc(doc, e)}
-                                className="p-1.5 rounded-md transition-colors"
-                                style={{ color: 'var(--color-text-muted)' }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.backgroundColor =
-                                    'var(--color-bg-hover)';
-                                  e.currentTarget.style.color =
-                                    'var(--color-accent)';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.backgroundColor =
-                                    'transparent';
-                                  e.currentTarget.style.color =
-                                    'var(--color-text-muted)';
-                                }}
-                              >
-                                <Edit3 size={13} />
-                              </button>
-                              <button
-                                onClick={(e) => handleDeleteDoc(doc.id, e)}
-                                className="p-1.5 rounded-md transition-colors"
-                                style={{ color: 'var(--color-text-muted)' }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.backgroundColor =
-                                    'var(--color-bg-hover)';
-                                  e.currentTarget.style.color = '#ef4444';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.backgroundColor =
-                                    'transparent';
-                                  e.currentTarget.style.color =
-                                    'var(--color-text-muted)';
-                                }}
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-
-                            {movingDocId === doc.id ? (
-                              <select
-                                value={doc.folderId || ''}
-                                onChange={(e) =>
-                                  handleMoveDocument(
-                                    doc.id,
-                                    e.target.value || null
-                                  )
-                                }
-                                onClick={(e) => e.stopPropagation()}
-                                onBlur={() => setMovingDocId(null)}
-                                className="text-xs px-1.5 py-1 rounded border outline-none"
-                                style={{
-                                  backgroundColor: 'var(--color-bg-secondary)',
-                                  borderColor: 'var(--color-border)',
-                                  color: 'var(--color-text-primary)',
-                                }}
-                                autoFocus
-                              >
-                                <option value="">无分组</option>
-                                {folders.map((folder) => (
-                                  <option key={folder.id} value={folder.id}>
-                                    {folder.name}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setMovingDocId(doc.id);
-                                }}
-                                className="text-[10px] px-2 py-0.5 rounded transition-colors"
-                                style={{
-                                  backgroundColor: 'var(--color-bg-secondary)',
-                                  color: 'var(--color-text-muted)',
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.color =
-                                    'var(--color-accent)';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.color =
-                                    'var(--color-text-muted)';
-                                }}
-                              >
-                                移动到分组
-                              </button>
-                            )}
-                          </div>
-                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
           </div>
         </div>
       </div>
+
+      {showBatchTagModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center"
+          onClick={() => setShowBatchTagModal(false)}
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)' }}
+        >
+          <div
+            className="w-[420px] max-w-[90vw] rounded-xl shadow-2xl overflow-hidden"
+            style={{ backgroundColor: 'var(--color-bg-secondary)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="flex items-center justify-between px-5 py-4 border-b"
+              style={{ borderColor: 'var(--color-border)' }}
+            >
+              <div className="flex items-center gap-2">
+                <Tag size={18} style={{ color: 'var(--color-accent)' }} />
+                <span
+                  className="text-base font-semibold"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
+                  批量添加标签
+                </span>
+              </div>
+              <button
+                onClick={() => setShowBatchTagModal(false)}
+                className="p-1 rounded transition-colors"
+                style={{ color: 'var(--color-text-muted)' }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div>
+                <div
+                  className="text-sm font-medium mb-2"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  输入标签（多个标签用逗号分隔）
+                </div>
+                <input
+                  type="text"
+                  autoFocus
+                  value={batchTagInput}
+                  onChange={(e) => setBatchTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleConfirmBatchAddTags();
+                    }
+                  }}
+                  placeholder="例如：重要, 已完成, 待审核"
+                  className="w-full px-3 py-2.5 rounded-lg text-sm outline-none border transition-all"
+                  style={{
+                    backgroundColor: 'var(--color-bg-tertiary)',
+                    borderColor: 'var(--color-border)',
+                    color: 'var(--color-text-primary)',
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = 'var(--color-accent)';
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = 'var(--color-border)';
+                  }}
+                />
+              </div>
+
+              {batchTagPreview.length > 0 && (
+                <div>
+                  <div
+                    className="text-xs font-medium mb-2"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    标签预览
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {batchTagPreview.map((tag, idx) => (
+                      <span
+                        key={`${tag}-${idx}`}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium"
+                        style={{
+                          backgroundColor: 'var(--color-accent-bg)',
+                          color: 'var(--color-accent)',
+                        }}
+                      >
+                        <Tag size={10} />
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div
+                className="text-xs px-3 py-2 rounded-lg"
+                style={{
+                  backgroundColor: 'var(--color-bg-tertiary)',
+                  color: 'var(--color-text-muted)',
+                }}
+              >
+                将应用到选中的 {selectedCount} 篇文档
+              </div>
+            </div>
+
+            <div
+              className="flex gap-2 px-5 py-4 border-t"
+              style={{ borderColor: 'var(--color-border)' }}
+            >
+              <button
+                onClick={() => {
+                  setShowBatchTagModal(false);
+                  setBatchTagInput('');
+                }}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: 'var(--color-bg-tertiary)',
+                  color: 'var(--color-text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmBatchAddTags}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: 'var(--color-accent)',
+                  color: '#ffffff',
+                }}
+              >
+                确认添加
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBatchMoveModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center"
+          onClick={() => setShowBatchMoveModal(false)}
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)' }}
+        >
+          <div
+            className="w-[420px] max-w-[90vw] rounded-xl shadow-2xl overflow-hidden"
+            style={{ backgroundColor: 'var(--color-bg-secondary)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="flex items-center justify-between px-5 py-4 border-b"
+              style={{ borderColor: 'var(--color-border)' }}
+            >
+              <div className="flex items-center gap-2">
+                <MoveRight size={18} style={{ color: 'var(--color-accent)' }} />
+                <span
+                  className="text-base font-semibold"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
+                  批量移动到分组
+                </span>
+              </div>
+              <button
+                onClick={() => setShowBatchMoveModal(false)}
+                className="p-1 rounded transition-colors"
+                style={{ color: 'var(--color-text-muted)' }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div>
+                <div
+                  className="text-sm font-medium mb-2"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  选择目标分组
+                </div>
+                <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                  <button
+                    onClick={() => {
+                      setBatchFolderId(null);
+                      setShowBatchNewFolder(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+                    style={{
+                      backgroundColor:
+                        batchFolderId === null && !showBatchNewFolder
+                          ? 'var(--color-accent-bg)'
+                          : 'var(--color-bg-tertiary)',
+                      color:
+                        batchFolderId === null && !showBatchNewFolder
+                          ? 'var(--color-accent)'
+                          : 'var(--color-text-secondary)',
+                    }}
+                  >
+                    <Layers size={14} />
+                    <span className="flex-1 text-left">无分组</span>
+                    {batchFolderId === null && !showBatchNewFolder && (
+                      <Check size={14} />
+                    )}
+                  </button>
+
+                  {folders.map((folder) => (
+                    <button
+                      key={folder.id}
+                      onClick={() => {
+                        setBatchFolderId(folder.id);
+                        setShowBatchNewFolder(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+                      style={{
+                        backgroundColor:
+                          batchFolderId === folder.id
+                            ? 'var(--color-accent-bg)'
+                            : 'var(--color-bg-tertiary)',
+                        color:
+                          batchFolderId === folder.id
+                            ? 'var(--color-accent)'
+                            : 'var(--color-text-secondary)',
+                      }}
+                    >
+                      <Folder size={14} />
+                      <span className="flex-1 text-left truncate">
+                        {folder.name}
+                      </span>
+                      {batchFolderId === folder.id && <Check size={14} />}
+                    </button>
+                  ))}
+
+                  {!showBatchNewFolder ? (
+                    <button
+                      onClick={() => {
+                        setShowBatchNewFolder(true);
+                        setBatchFolderId(null);
+                        setBatchNewFolderName('');
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+                      style={{
+                        backgroundColor: 'var(--color-bg-tertiary)',
+                        color: 'var(--color-text-secondary)',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = 'var(--color-accent)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = 'var(--color-text-secondary)';
+                      }}
+                    >
+                      <Plus size={14} />
+                      新建分组...
+                    </button>
+                  ) : (
+                    <div
+                      className="p-3 rounded-lg space-y-2"
+                      style={{ backgroundColor: 'var(--color-bg-tertiary)' }}
+                    >
+                      <input
+                        autoFocus
+                        value={batchNewFolderName}
+                        onChange={(e) => setBatchNewFolderName(e.target.value)}
+                        placeholder="输入新分组名称"
+                        className="w-full px-2.5 py-1.5 rounded text-sm outline-none border"
+                        style={{
+                          backgroundColor: 'var(--color-bg-secondary)',
+                          borderColor: 'var(--color-border)',
+                          color: 'var(--color-text-primary)',
+                        }}
+                      />
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => {
+                            if (batchNewFolderName.trim()) {
+                              setBatchFolderId('__new__');
+                            }
+                          }}
+                          className="flex-1 px-2 py-1 rounded text-xs font-medium"
+                          style={{
+                            backgroundColor: batchNewFolderName.trim()
+                              ? 'var(--color-accent)'
+                              : 'var(--color-bg-hover)',
+                            color: batchNewFolderName.trim()
+                              ? '#ffffff'
+                              : 'var(--color-text-muted)',
+                          }}
+                          disabled={!batchNewFolderName.trim()}
+                        >
+                          使用此分组
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowBatchNewFolder(false);
+                            setBatchNewFolderName('');
+                          }}
+                          className="px-2 py-1 rounded text-xs font-medium"
+                          style={{
+                            backgroundColor: 'var(--color-bg-hover)',
+                            color: 'var(--color-text-secondary)',
+                          }}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div
+                className="text-xs px-3 py-2 rounded-lg"
+                style={{
+                  backgroundColor: 'var(--color-bg-tertiary)',
+                  color: 'var(--color-text-muted)',
+                }}
+              >
+                将移动选中的 {selectedCount} 篇文档
+              </div>
+            </div>
+
+            <div
+              className="flex gap-2 px-5 py-4 border-t"
+              style={{ borderColor: 'var(--color-border)' }}
+            >
+              <button
+                onClick={() => {
+                  setShowBatchMoveModal(false);
+                  setBatchFolderId(null);
+                  setBatchNewFolderName('');
+                  setShowBatchNewFolder(false);
+                }}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: 'var(--color-bg-tertiary)',
+                  color: 'var(--color-text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmBatchMove}
+                disabled={
+                  batchFolderId === null &&
+                  !(showBatchNewFolder && batchNewFolderName.trim())
+                }
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: 'var(--color-accent)',
+                  color: '#ffffff',
+                }}
+              >
+                确认移动
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDialog && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center"
+          onClick={() => setConfirmDialog(null)}
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+        >
+          <div
+            className="w-[380px] max-w-[90vw] rounded-xl shadow-2xl overflow-hidden"
+            style={{ backgroundColor: 'var(--color-bg-secondary)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5">
+              <div
+                className="text-base font-semibold mb-2"
+                style={{
+                  color: confirmDialog.danger ? '#ef4444' : 'var(--color-text-primary)',
+                }}
+              >
+                {confirmDialog.title}
+              </div>
+              <div
+                className="text-sm leading-relaxed"
+                style={{ color: 'var(--color-text-secondary)' }}
+              >
+                {confirmDialog.message}
+              </div>
+            </div>
+
+            <div
+              className="flex gap-2 px-5 py-4 border-t"
+              style={{ borderColor: 'var(--color-border)' }}
+            >
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: 'var(--color-bg-tertiary)',
+                  color: 'var(--color-text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--color-bg-tertiary)';
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmDialog.onConfirm}
+                className="flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: confirmDialog.danger ? '#ef4444' : 'var(--color-accent)',
+                  color: '#ffffff',
+                }}
+              >
+                确认
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

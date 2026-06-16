@@ -36,12 +36,20 @@ export interface PdfExportTemplate {
   coverTitle: string;
   coverSubtitle: string;
   coverDate: boolean;
+  coverAuthor: string;
+  coverCompany: string;
+  coverLogo: string;
   header: boolean;
   headerText: string;
+  headerIncludeTitle: boolean;
+  headerIncludePageNumber: boolean;
   footer: boolean;
   footerText: string;
+  footerIncludeDate: boolean;
+  footerIncludePageNumber: boolean;
   pageNumber: boolean;
-  pageNumberPosition: 'bottom-left' | 'bottom-center' | 'bottom-right';
+  pageNumberPosition: 'bottom-left' | 'bottom-center' | 'bottom-right' | 'top-left' | 'top-right';
+  pageNumberStartFrom: number;
   outlineStyle: 'numbered' | 'bulleted' | 'none';
   fontFamily: string;
   fontSize: number;
@@ -52,6 +60,8 @@ export interface PdfExportTemplate {
     left: number;
     right: number;
   };
+  watermarkText: string;
+  watermarkEnabled: boolean;
 }
 
 export interface PdfExportOptions {
@@ -67,6 +77,15 @@ export interface SearchMatchItem {
   text: string;
   context: string;
   heading: string;
+  scope: SearchScope;
+}
+
+export type SearchScope = 'all' | 'heading' | 'content' | 'code';
+
+export interface SearchOptions {
+  scope: SearchScope;
+  caseSensitive: boolean;
+  wholeWord: boolean;
 }
 
 export type SortType = 'name' | 'updatedAt' | 'createdAt';
@@ -78,4 +97,18 @@ export interface DocumentFilter {
   dateFrom: number | null;
   dateTo: number | null;
   sortType: SortType;
+}
+
+export type DiffOperation = 'added' | 'removed' | 'unchanged' | 'modified';
+
+export interface DiffLine {
+  type: DiffOperation;
+  content: string;
+  lineNumber: number;
+}
+
+export interface DiffBlock {
+  type: DiffOperation;
+  lines: DiffLine[];
+  heading?: string;
 }
