@@ -3,14 +3,16 @@ import Toolbar from '@/components/Toolbar';
 import Outline from '@/components/Outline';
 import Editor from '@/components/Editor';
 import Preview from '@/components/Preview';
+import SearchPanel from '@/components/SearchPanel';
 import { useAppStore } from '@/store';
 
 export default function Home() {
-  const { theme, setTheme, outline } = useAppStore();
+  const { theme, setTheme, outline, searchQuery, clearSearchHighlightsInDom } = useAppStore();
   const previewRef = useRef<HTMLDivElement>(null);
   const editorScrollRef = useRef<HTMLTextAreaElement>(null);
   const [scrollRatio, setScrollRatio] = useState(0);
   const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
+  const [searchPanelOpen, setSearchPanelOpen] = useState(!!searchQuery);
   const isProgrammaticScroll = useRef(false);
   const scrollTimeout = useRef<number | null>(null);
 
@@ -19,6 +21,33 @@ export default function Home() {
       document.documentElement.setAttribute('data-theme', theme);
     }
   }, [theme]);
+
+  useEffect(() => {
+    if (searchQuery) {
+      setSearchPanelOpen(true);
+    }
+  }, [searchQuery]);
+
+  useEffect(() => {
+    return () => {
+      const previewEl = document.querySelector('.markdown-body') as HTMLElement | null;
+      if (previewEl) {
+        clearSearchHighlightsInDom(previewEl);
+      }
+    };
+  }, [clearSearchHighlightsInDom]);
+
+  const handleToggleSearchPanel = useCallback(() => {
+    setSearchPanelOpen((prev) => {
+      if (prev) {
+        const previewEl = document.querySelector('.markdown-body') as HTMLElement | null;
+        if (previewEl) {
+          clearSearchHighlightsInDom(previewEl);
+        }
+      }
+      return !prev;
+    });
+  }, [clearSearchHighlightsInDom]);
 
   const handleEditorScroll = useCallback((ratio: number) => {
     if (isProgrammaticScroll.current) return;
@@ -108,9 +137,17 @@ export default function Home() {
       className="h-screen flex flex-col"
       style={{ backgroundColor: 'var(--color-bg-primary)' }}
     >
-      <Toolbar previewRef={previewRef} />
+      <Toolbar
+        previewRef={previewRef}
+        onToggleSearchPanel={handleToggleSearchPanel}
+        searchPanelOpen={searchPanelOpen}
+      />
 
       <div className="flex-1 flex overflow-hidden">
+        {searchPanelOpen && (
+          <SearchPanel previewRef={previewRef} />
+        )}
+
         <Outline onNavigate={handleNavigate} activeHeadingId={activeHeadingId} />
 
         <div className="flex-1 flex overflow-hidden">

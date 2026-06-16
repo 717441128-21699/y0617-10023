@@ -1,19 +1,20 @@
 import { useState } from 'react';
-import { Sun, Moon, FileDown, Copy, Check, FileText, FolderOpen, ChevronDown } from 'lucide-react';
+import { Sun, Moon, FileDown, Copy, Check, FileText, FolderOpen, ChevronDown, Search } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { exportToPdf } from '@/utils/exportPdf';
 import { copyHtmlToClipboard } from '@/utils/copyHtml';
 import type { PdfExportOptions } from '@/types';
 import DocumentManager from './DocumentManager';
 import PdfExportDialog from './PdfExportDialog';
-import SearchBar from './SearchBar';
 
 interface ToolbarProps {
   previewRef: React.RefObject<HTMLDivElement | null>;
+  onToggleSearchPanel: () => void;
+  searchPanelOpen: boolean;
 }
 
-export default function Toolbar({ previewRef }: ToolbarProps) {
-  const { theme, toggleTheme, html, documents, currentDocId } = useAppStore();
+export default function Toolbar({ previewRef, onToggleSearchPanel, searchPanelOpen }: ToolbarProps) {
+  const { theme, toggleTheme, html, documents, currentDocId, outline, clearSearch } = useAppStore();
   const [copied, setCopied] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showDocManager, setShowDocManager] = useState(false);
@@ -30,13 +31,16 @@ export default function Toolbar({ previewRef }: ToolbarProps) {
   };
 
   const handleOpenPdfDialog = () => {
+    clearSearch();
     setShowPdfDialog(true);
   };
 
   const handleExportPdf = async (options: PdfExportOptions) => {
     if (!previewRef.current) return;
     setExporting(true);
+    clearSearch();
     try {
+      await new Promise(resolve => setTimeout(resolve, 50));
       const contentElement = previewRef.current.querySelector(
         '.markdown-body'
       ) as HTMLElement | null;
@@ -44,6 +48,7 @@ export default function Toolbar({ previewRef }: ToolbarProps) {
         await exportToPdf({
           ...options,
           contentElement,
+          outline,
         });
       }
     } finally {
@@ -95,7 +100,34 @@ export default function Toolbar({ previewRef }: ToolbarProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <SearchBar previewRef={previewRef} />
+          <button
+            onClick={onToggleSearchPanel}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+            style={{
+              backgroundColor: searchPanelOpen
+                ? 'var(--color-accent-bg)'
+                : 'var(--color-bg-tertiary)',
+              color: searchPanelOpen
+                ? 'var(--color-accent)'
+                : 'var(--color-text-muted)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)';
+              e.currentTarget.style.color = 'var(--color-text-primary)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = searchPanelOpen
+                ? 'var(--color-accent-bg)'
+                : 'var(--color-bg-tertiary)';
+              e.currentTarget.style.color = searchPanelOpen
+                ? 'var(--color-accent)'
+                : 'var(--color-text-muted)';
+            }}
+            title="搜索 (Ctrl+F)"
+          >
+            <Search size={16} />
+            <span className="hidden sm:inline">搜索</span>
+          </button>
 
           <button
             onClick={() => setShowDocManager(true)}
@@ -186,6 +218,8 @@ export default function Toolbar({ previewRef }: ToolbarProps) {
         defaultFilename={currentDoc?.name || 'document'}
         onExport={handleExportPdf}
         exporting={exporting}
+        previewElement={previewRef.current}
+        outline={outline}
       />
     </>
   );

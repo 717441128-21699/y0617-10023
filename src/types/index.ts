@@ -10,6 +10,7 @@ export interface Document {
   id: string;
   name: string;
   content: string;
+  tags: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -20,8 +21,12 @@ export interface PdfExportOptions {
   orientation: 'portrait' | 'landscape';
 }
 
-export interface SearchMatch {
+export interface SearchMatchItem {
   index: number;
-  element: HTMLElement;
+  element: HTMLElement | null;
   text: string;
+  context: string;
+  heading: string;
 }
+
+export type SortType = 'name' | 'updatedAt' | 'createdAt';
